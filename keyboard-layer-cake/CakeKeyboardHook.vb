@@ -160,9 +160,9 @@ Public Class CakeKeyboardHook
         strJSON = IO.File.ReadAllText("keyboard-layer-cake.json")
 
         oJSONConfigDictionary = oJavaScriptSerializer.Deserialize(Of Dictionary(Of String, Object))(strJSON)
-        If oJSONConfigDictionary.Keys.Contains("CapsLockMode") Then
-            Me.oRemapConfigDictionary = DirectCast(oJSONConfigDictionary("CapsLockMode"), Dictionary(Of String, Object))
-        End If
+        'If oJSONConfigDictionary.Keys.Contains("CapsLockMode") Then
+        '    Me.oRemapConfigDictionary = DirectCast(oJSONConfigDictionary("CapsLockMode"), Dictionary(Of String, Object))
+        'End If
 
         If DirectCast(oJSONConfigDictionary("ShowKeyCodes"), String) = "y" Then
             booShowEachKeyCode = True
@@ -345,7 +345,9 @@ Public Class CakeKeyboardHook
                     RaiseEvent ShowToast(oKey.ToString(), False)
                 End If
 
-                booKeyRemapped = ProcessRemapKeys(oKey, oRemapConfigDictionary)
+                If oRemapConfigDictionary IsNot Nothing Then
+                    booKeyRemapped = ProcessRemapKeys(oKey, oRemapConfigDictionary)
+                End If
 
                 If oKey = Keys.Capital Then
                     booCapsLockIsDown = True
@@ -410,6 +412,8 @@ Public Class CakeKeyboardHook
                                 RaiseEvent ShowToast(strLayerName, False)
                             End If
                             Return 1
+                        Else
+                            SendAKey(Keys.Capital, KeySendType.DownThenUp)
                         End If
                     End If
                 ElseIf oKey = Keys.LShiftKey Then
