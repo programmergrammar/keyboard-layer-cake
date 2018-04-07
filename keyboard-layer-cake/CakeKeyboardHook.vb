@@ -160,14 +160,24 @@ Public Class CakeKeyboardHook
         strJSON = IO.File.ReadAllText("keyboard-layer-cake.json")
 
         oJSONConfigDictionary = oJavaScriptSerializer.Deserialize(Of Dictionary(Of String, Object))(strJSON)
-        'If oJSONConfigDictionary.Keys.Contains("CapsLockMode") Then
-        '    Me.oRemapConfigDictionary = DirectCast(oJSONConfigDictionary("CapsLockMode"), Dictionary(Of String, Object))
-        'End If
 
         If DirectCast(oJSONConfigDictionary("ShowKeyCodes"), String) = "y" Then
             booShowEachKeyCode = True
         Else
             booShowEachKeyCode = False
+        End If
+
+        Dim strStartup As String = Nothing
+        If oJSONConfigDictionary.Keys.Contains("StartupLayerName") Then
+            strStartup = oJSONConfigDictionary("StartupLayerName")
+        End If
+
+        If strStartup IsNot Nothing Then
+            If strStartup <> "" Then
+                If oJSONConfigDictionary.Keys.Contains(strStartup) Then
+                    Me.oRemapConfigDictionary = DirectCast(oJSONConfigDictionary(strStartup), Dictionary(Of String, Object))
+                End If
+            End If
         End If
     End Sub
 

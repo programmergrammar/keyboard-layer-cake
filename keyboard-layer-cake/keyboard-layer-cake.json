@@ -1,4 +1,5 @@
 {
+   "StartupLayerName":"CapsLockMode",
    "ShowKeyCodes":"n",
    "CapsLockMode":{
       "Name":"Colemak",
