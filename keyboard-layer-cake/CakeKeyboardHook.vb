@@ -8,16 +8,9 @@ End Enum
 Public Class CakeKeyboardHook
     Dim oJSONConfigDictionary As Dictionary(Of String, Object)
     Dim oRemapConfigDictionary As Dictionary(Of String, Object)
-    Dim booCapsLockIsDown As Boolean = False
-    Dim booKeysWhileCapsLockWasDown As Boolean = False
-    Dim booSpaceIsDown As Boolean = False
-    Dim booKeysWhileSpaceWasDown As Boolean = False
-    Dim booLShiftIsDown As Boolean = False
-    Dim booRShiftIsDown As Boolean = False
-    Dim booKeysWhileLShiftWasDown As Boolean = False
-    Dim booKeysWhileRShiftWasDown As Boolean = False
     Dim booShowEachKeyCode As Boolean = False
-    Dim strKeyPressedWithCapsLock As String = ""
+    Dim oKeysPressed As New Collections.Generic.List(Of Keys)
+    Dim oAloneKeyPressed As New Collections.Generic.List(Of Keys)
 
     <DllImport("User32.dll",
                CharSet:=CharSet.Auto,
@@ -181,7 +174,9 @@ Public Class CakeKeyboardHook
         End If
     End Sub
 
-    Private Function ProcessRemapKeys(oKey As Keys, oRemapSection As Dictionary(Of String, Object)) As Boolean
+    Private Function ProcessRemapKeys(oKey As Keys,
+                                      oRemapSection As Dictionary(Of String, Object),
+                                      Optional booKeyUp As Boolean = False) As Boolean
         Dim booKeyRemapped As Boolean = False
         Dim strKeyName As String = oKey.ToString()
         Static Dim booPauseRemapping As Boolean = False
@@ -191,9 +186,70 @@ Public Class CakeKeyboardHook
         End If
 
         Dim strKeyToSend As String = Nothing
-        If oRemapSection.Keys.Contains(strKeyName) Then
-            strKeyToSend = oRemapSection(strKeyName).ToString
+
+        If oKeysPressed.Count > 1 Then
+            ' more than one key down
+            Dim strKeysThatArePressed As String = ""
+            oAloneKeyPressed.Clear()
+
+            For Each oEachKey As Keys In oKeysPressed
+                strKeysThatArePressed &= oEachKey.ToString() & ", "
+            Next
+            strKeysThatArePressed = strKeysThatArePressed.Substring(0, strKeysThatArePressed.Length - 2)
+            If oRemapSection.Keys.Contains(strKeysThatArePressed) Then
+                strKeyToSend = oRemapSection(strKeysThatArePressed).ToString
+            End If
+            If strKeyToSend = "" Then
+                If oRemapSection.Keys.Contains(strKeyName) Then
+                    strKeyToSend = oRemapSection(strKeyName).ToString
+                End If
+            End If
+        Else
+            ' just one key
+            If booKeyUp Then
+                ' down
+                If oRemapSection.Keys.Contains(strKeyName & "(up)") Then
+                    strKeyToSend = oRemapSection(strKeyName & "(up)").ToString
+                    Dim oKeyToSend As Keys = [Enum].Parse(GetType(Keys), strKeyToSend)
+                    If [Enum].TryParse(Of Keys)(strKeyToSend, Nothing) Then
+                        Dim oDownKeyToSend As Keys = [Enum].Parse(GetType(Keys), strKeyToSend)
+                        SendAKey(oDownKeyToSend, KeySendType.Up)
+                        booKeyRemapped = True
+                    End If
+                End If
+                If oAloneKeyPressed.Count = 1 AndAlso
+                        oAloneKeyPressed(0) = oKey AndAlso
+                         oRemapSection.Keys.Contains(strKeyName & "(alone)") Then
+                    oAloneKeyPressed.Remove(oKey)
+                    strKeyToSend = oRemapSection(strKeyName & "(alone)").ToString
+                    SendAKey(oKey, KeySendType.Up)
+                Else
+                    Return False
+                End If
+            Else
+                ' down
+                If oRemapSection.Keys.Contains(strKeyName & "(down)") Then
+                    strKeyToSend = oRemapSection(strKeyName & "(down)").ToString
+                    Dim oKeyToSend As Keys = [Enum].Parse(GetType(Keys), strKeyToSend)
+                    If [Enum].TryParse(Of Keys)(strKeyToSend, Nothing) Then
+                        Dim oDownKeyToSend As Keys = [Enum].Parse(GetType(Keys), strKeyToSend)
+                        SendAKey(oDownKeyToSend, KeySendType.Down)
+                        booKeyRemapped = True
+                    End If
+                End If
+                If oRemapSection.Keys.Contains(strKeyName) Then
+                    strKeyToSend = oRemapSection(strKeyName).ToString
+                ElseIf oRemapSection.Keys.Contains(strKeyName & "(alone)") Then
+                    oAloneKeyPressed.Add(oKey)
+                    strKeyToSend = ""
+                ElseIf oAloneKeyPressed.Count > 0 Then
+                    oAloneKeyPressed.Remove(oKey)
+                    strKeyToSend = ""
+                End If
+            End If
+
         End If
+
         If strKeyToSend IsNot Nothing Then
             If strKeyToSend.ToLower = "" Then
                 booKeyRemapped = True
@@ -214,6 +270,18 @@ Public Class CakeKeyboardHook
                 SendKeys.SendWait(strKeyToSend)
                 booPauseRemapping = False
                 booKeyRemapped = True
+            ElseIf strKeyToSend.ToLower.StartsWith("goto-layer:") Then
+                strKeyToSend = strKeyToSend.Substring(11)
+                strKeyToSend = strKeyToSend.Trim()
+
+                If oJSONConfigDictionary.Keys.Contains(strKeyToSend) Then
+                    Me.oRemapConfigDictionary = DirectCast(oJSONConfigDictionary(strKeyToSend), Dictionary(Of String, Object))
+                    Dim strLayerName As String = strKeyToSend
+                    If strLayerName IsNot Nothing Then
+                        RaiseEvent ShowToast(strLayerName, False)
+                        booKeyRemapped = True
+                    End If
+                End If
             ElseIf strKeyToSend.ToLower.StartsWith("run:") Then
                 strKeyToSend = strKeyToSend.Substring(4)
                 Dim oProcess As New System.Diagnostics.Process()
@@ -270,7 +338,7 @@ Public Class CakeKeyboardHook
     End Function
 
     Private Sub SendAKey(oKeyToSend As Keys, oKeySendType As KeySendType)
-        Debug.WriteLine(oKeyToSend.ToString & " " & oKeySendType.ToString)
+        'Debug.WriteLine(oKeyToSend.ToString & " " & oKeySendType.ToString)
         Dim booExtenedKey As Boolean = False
 
         Select Case oKeyToSend
@@ -322,34 +390,19 @@ Public Class CakeKeyboardHook
         Dim booKeyRemapped As Boolean = False
         Dim oKey As Keys = oKBStruck.vkCode
 
-        If wParam = WM_KEYDOWN OrElse wParam = WM_SYSKEYDOWN Then
-            If booLShiftIsDown AndAlso
-                        oKey <> Keys.RShiftKey AndAlso
-                        oKey <> Keys.LShiftKey Then
-                booKeysWhileLShiftWasDown = True
-            End If
-            If booRShiftIsDown AndAlso
-                        oKey <> Keys.RShiftKey AndAlso
-                        oKey <> Keys.LShiftKey Then
-                booKeysWhileRShiftWasDown = True
-            End If
-            If booSpaceIsDown AndAlso
-                        oKey <> Keys.Space AndAlso
-                        oKBStruck.dwExtraInfo <> 9 Then
-                booKeysWhileSpaceWasDown = True
-            End If
-            If booCapsLockIsDown AndAlso
-                        oKey <> Keys.Capital AndAlso
-                        oKBStruck.dwExtraInfo <> 9 Then
-                booKeysWhileCapsLockWasDown = True
-            End If
-        End If
-
         If oKBStruck.dwExtraInfo = 9 Then
             Return 0
         End If
         Select Case wParam
             Case WM_KEYDOWN, WM_SYSKEYDOWN
+                If oKeysPressed.Contains(oKey) = False Then
+                    oKeysPressed.Add(oKey)
+                End If
+                For Each oEachKey In oKeysPressed
+                    Debug.Write(oEachKey.ToString)
+                    Debug.Write(" ")
+                Next
+                Debug.WriteLine("")
                 ' Show keycode if config 
                 If booShowEachKeyCode Then
                     RaiseEvent ShowToast(oKey.ToString(), False)
@@ -359,153 +412,23 @@ Public Class CakeKeyboardHook
                     booKeyRemapped = ProcessRemapKeys(oKey, oRemapConfigDictionary)
                 End If
 
-                If oKey = Keys.Capital Then
-                    booCapsLockIsDown = True
-                    booKeyRemapped = True
-                ElseIf oKey = Keys.Space Then
-                    booSpaceIsDown = True
-                    SendAKey(Keys.LControlKey, KeySendType.Down)
-                    booKeyRemapped = True
-                ElseIf oKey = Keys.LShiftKey Then
-                    booLShiftIsDown = True
-                    Return 0
-                ElseIf oKey = Keys.RShiftKey Then
-                    booRShiftIsDown = True
-                    Return 0
-                ElseIf oKey <> Keys.Capital AndAlso booCapsLockIsDown Then
-                    strKeyPressedWithCapsLock = oKBStruck.ToString
-                    booKeyRemapped = True
-                End If
-
                 If booKeyRemapped Then
                     Return 1
                 End If
             Case WM_KEYUP, WM_SYSKEYUP
-                If oKey = Keys.Space Then
-                    If booKeysWhileSpaceWasDown Then
-                        SendAKey(Keys.LControlKey, KeySendType.Up)
-                        SendAKey(Keys.LControlKey, KeySendType.Up)
-                    Else
-                        SendAKey(Keys.LControlKey, KeySendType.Up)
-                        SendAKey(Keys.LControlKey, KeySendType.Up)
-                        SendAKey(Keys.Space, KeySendType.DownThenUp)
-                    End If
-                    booSpaceIsDown = False
-                    booKeysWhileSpaceWasDown = False
+                oKeysPressed.Remove(oKey)
+                For Each oEachKey In oKeysPressed
+                    Debug.Write(oEachKey.ToString)
+                    Debug.Write(" ")
+                Next
+                Debug.WriteLine("")
+
+                If oRemapConfigDictionary IsNot Nothing Then
+                    booKeyRemapped = ProcessRemapKeys(oKey, oRemapConfigDictionary, booKeyUp:=True)
+                End If
+
+                If booKeyRemapped Then
                     Return 1
-                ElseIf oKey <> Keys.Capital AndAlso booCapsLockIsDown Then
-                    booCapsLockIsDown = False
-                    booKeysWhileCapsLockWasDown = False
-                    If oJSONConfigDictionary.Keys.Contains("CapsLockMode" & oKey.ToString) Then
-                        Me.oRemapConfigDictionary = DirectCast(oJSONConfigDictionary("CapsLockMode" & oKey.ToString), Dictionary(Of String, Object))
-                        Dim strLayerName As String = oRemapConfigDictionary("Name").ToString
-                        If strLayerName IsNot Nothing Then
-                            RaiseEvent ShowToast(strLayerName, False)
-                        End If
-                        Return 1
-                    End If
-                ElseIf oKey = Keys.Capital Then
-                    If booCapsLockIsDown = False Then
-                        Return 1
-                    ElseIf booKeysWhileCapsLockWasDown Then
-                        booCapsLockIsDown = False
-                        booKeysWhileCapsLockWasDown = False
-                        Return 1
-                    Else
-                        booCapsLockIsDown = False
-                        booKeysWhileCapsLockWasDown = False
-
-                        If oJSONConfigDictionary.Keys.Contains("CapsLockMode") Then
-                            Me.oRemapConfigDictionary = DirectCast(oJSONConfigDictionary("CapsLockMode"), Dictionary(Of String, Object))
-                            Dim strLayerName As String = oRemapConfigDictionary("Name").ToString
-                            If strLayerName IsNot Nothing Then
-                                RaiseEvent ShowToast(strLayerName, False)
-                            End If
-                            Return 1
-                        Else
-                            SendAKey(Keys.Capital, KeySendType.DownThenUp)
-                        End If
-                    End If
-                ElseIf oKey = Keys.LShiftKey Then
-                    If booRShiftIsDown AndAlso booLShiftIsDown AndAlso
-                                booKeysWhileRShiftWasDown = False AndAlso booKeysWhileLShiftWasDown = False Then
-                        booLShiftIsDown = False
-                        booRShiftIsDown = False
-                        booKeysWhileLShiftWasDown = False
-                        booKeysWhileRShiftWasDown = True
-                        SendAKey(Keys.LShiftKey, KeySendType.Up)
-                        SendAKey(Keys.LShiftKey, KeySendType.Up)
-                        SendAKey(Keys.RShiftKey, KeySendType.Up)
-                        SendAKey(Keys.RShiftKey, KeySendType.Up)
-
-                        If oJSONConfigDictionary.Keys.Contains("LeftAndRightShiftMode") Then
-                            Me.oRemapConfigDictionary = DirectCast(oJSONConfigDictionary("LeftAndRightShiftMode"), Dictionary(Of String, Object))
-                            Dim strLayerName As String = oRemapConfigDictionary("Name").ToString
-                            If strLayerName IsNot Nothing Then
-                                RaiseEvent ShowToast(strLayerName, False)
-                            End If
-                            Return 1
-                        End If
-                    ElseIf booKeysWhileLShiftWasDown Then
-                        booLShiftIsDown = False
-                        booKeysWhileLShiftWasDown = False
-                        SendAKey(Keys.LShiftKey, KeySendType.Up)
-                        SendAKey(Keys.LShiftKey, KeySendType.Up)
-                    Else
-                        booLShiftIsDown = False
-                        booKeysWhileLShiftWasDown = False
-                        SendAKey(Keys.LShiftKey, KeySendType.Up)
-                        SendAKey(Keys.LShiftKey, KeySendType.Up)
-
-                        If oJSONConfigDictionary.Keys.Contains("LeftShiftMode") Then
-                            Me.oRemapConfigDictionary = DirectCast(oJSONConfigDictionary("LeftShiftMode"), Dictionary(Of String, Object))
-                            Dim strLayerName As String = oRemapConfigDictionary("Name").ToString
-                            If strLayerName IsNot Nothing Then
-                                RaiseEvent ShowToast(strLayerName, False)
-                            End If
-                            Return 1
-                        End If
-                    End If
-                ElseIf oKey = Keys.RShiftKey Then
-                    If booRShiftIsDown AndAlso booLShiftIsDown AndAlso
-                        booKeysWhileRShiftWasDown = False AndAlso booKeysWhileLShiftWasDown = False Then
-                        booLShiftIsDown = False
-                        booRShiftIsDown = False
-                        booKeysWhileLShiftWasDown = True
-                        booKeysWhileRShiftWasDown = False
-                        SendAKey(Keys.LShiftKey, KeySendType.Up)
-                        SendAKey(Keys.LShiftKey, KeySendType.Up)
-                        SendAKey(Keys.RShiftKey, KeySendType.Up)
-                        SendAKey(Keys.RShiftKey, KeySendType.Up)
-
-                        If oJSONConfigDictionary.Keys.Contains("LeftAndRightShiftMode") Then
-                            Me.oRemapConfigDictionary = DirectCast(oJSONConfigDictionary("LeftAndRightShiftMode"), Dictionary(Of String, Object))
-                            Dim strLayerName As String = oRemapConfigDictionary("Name").ToString
-                            If strLayerName IsNot Nothing Then
-                                RaiseEvent ShowToast(strLayerName, False)
-                            End If
-                            Return 1
-                        End If
-                    ElseIf booKeysWhileRShiftWasDown Then
-                        booRShiftIsDown = False
-                        booKeysWhileRShiftWasDown = False
-                        SendAKey(Keys.RShiftKey, KeySendType.Up)
-                        SendAKey(Keys.RShiftKey, KeySendType.Up)
-                    Else
-                        booRShiftIsDown = False
-                        booKeysWhileRShiftWasDown = False
-                        SendAKey(Keys.RShiftKey, KeySendType.Up)
-                        SendAKey(Keys.RShiftKey, KeySendType.Up)
-
-                        If oJSONConfigDictionary.Keys.Contains("RightShiftMode") Then
-                            Me.oRemapConfigDictionary = DirectCast(oJSONConfigDictionary("RightShiftMode"), Dictionary(Of String, Object))
-                            Dim strLayerName As String = oRemapConfigDictionary("Name").ToString
-                            If strLayerName IsNot Nothing Then
-                                RaiseEvent ShowToast(strLayerName, False)
-                            End If
-                            Return 0
-                        End If
-                    End If
                 End If
         End Select
         Return 99999
